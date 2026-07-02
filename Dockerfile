@@ -15,7 +15,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Tell yt-dlp to use node as JS runtime and allow EJS remote components
 RUN mkdir -p /etc/yt-dlp && \
-    printf '--no-js-runtimes\n--js-runtimes node\n--remote-components ejs:github\n' > /etc/yt-dlp/yt-dlp.conf
+    echo '--no-js-runtimes' > /etc/yt-dlp/yt-dlp.conf && \
+    echo '--js-runtimes node' >> /etc/yt-dlp/yt-dlp.conf && \
+    echo '--remote-components ejs:github' >> /etc/yt-dlp/yt-dlp.conf
 
 ENV YT_DLP_CONFIG=/etc/yt-dlp/yt-dlp.conf
 
