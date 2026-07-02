@@ -126,9 +126,6 @@ def get_info(url: str) -> dict:
     opts = {
         **_COMMON_OPTS,
         'logger': _SilentLogger(),
-        'extractor_args': {
-            'youtube': _get_youtube_args()
-        },
         'http_headers': {
             'User-Agent': (
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
@@ -137,6 +134,12 @@ def get_info(url: str) -> dict:
             )
         }
     }
+
+    # Only inject PO token args if they are available (from POT server or env vars)
+    yt_args = _get_youtube_args()
+    # Only pass extractor_args if we actually have PO token data (avoid SABR trigger)
+    if 'po_token' in yt_args or 'visitor_data' in yt_args:
+        opts['extractor_args'] = {'youtube': yt_args}
     
     # ── Handle Cookies to Bypass Bot Detection ──
     cookie_path = None
