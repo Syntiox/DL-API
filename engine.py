@@ -26,7 +26,8 @@ import json
 # ──────────────────────────────────────────────
 def _get_youtube_args() -> dict:
     yt_args = {
-        'player_client': ['android', 'web'],
+        'player_client': ['android', 'web', 'ios'],
+        'player_skip': ['dash', 'hls'],
     }
     
     # 1. Try to fetch from Remote PO Token Server (if configured)
@@ -124,20 +125,12 @@ def get_info(url: str) -> dict:
     """Fetch metadata for a single video, search query, or a playlist."""
     is_search = url.startswith('ytsearch')
 
-    # android_embedded bypasses bot-detection on datacenter IPs, avoids SABR, returns full DASH
-    yt_args = {'player_client': ['android_embedded', 'android_creator']}
-
-    # Inject PO token / visitor_data if available from POT server or env vars
-    extra = _get_youtube_args()
-    if 'po_token' in extra:
-        yt_args['po_token'] = extra['po_token']
-    if 'visitor_data' in extra:
-        yt_args['visitor_data'] = extra['visitor_data']
-
     opts = {
         **_COMMON_OPTS,
         'logger': _SilentLogger(),
-        'extractor_args': {'youtube': yt_args},
+        'extractor_args': {
+            'youtube': _get_youtube_args()
+        },
         'http_headers': {
             'User-Agent': (
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
