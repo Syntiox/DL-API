@@ -6,3 +6,4 @@ python-jose[cryptography]
 httpx
 cachetools
 curl_cffi
+yt-dlp-get-pot

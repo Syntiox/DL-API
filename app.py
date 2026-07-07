@@ -130,7 +130,14 @@ async def get_info(body: InfoRequest, request: Request):
             }
         )
 
-    base = str(request.base_url)  
+    # Fix scheme for reverse-proxy hosts (Railway, Render, etc.)
+    # They terminate TLS and forward requests internally as http,
+    # so request.base_url gives http:// even when the client used https://.
+    # X-Forwarded-Proto contains the original scheme used by the client.
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    base = str(request.base_url)
+    if forwarded_proto == "https" and base.startswith("http://"):
+        base = "https://" + base[len("http://"):]
 
     # Wrap best_video URL
     best_video_dict = result.pop("best_video", {})
@@ -293,15 +300,60 @@ async def stream_video(token: str = Query(...)):
     filename   = f"download.{ext}"
 
     async def _streamer():
+        # Detect platform from the CDN/stream URL and set the correct Referer/Origin.
+        # yt-dlp usually provides these via req_headers, but if missing we fall back
+        # to platform-specific defaults so the CDN doesn't 403-reject the request.
+        _url_lower = yt_url.lower()
+
+        # ── Platform detection (CDN domains + source domains) ──
+        if any(d in _url_lower for d in ("tiktok.com", "tiktokcdn", "tiktokcdn-us", "musical.ly")):
+            _referer = "https://www.tiktok.com/"
+            _origin  = "https://www.tiktok.com"
+        elif any(d in _url_lower for d in ("facebook.com", "fbcdn.net", "fb.watch", "fna.fbcdn.net")):
+            _referer = "https://www.facebook.com/"
+            _origin  = "https://www.facebook.com"
+        elif any(d in _url_lower for d in ("instagram.com", "cdninstagram.com")):
+            _referer = "https://www.instagram.com/"
+            _origin  = "https://www.instagram.com"
+        elif any(d in _url_lower for d in ("soundcloud.com", "sndcdn.com")):
+            _referer = "https://soundcloud.com/"
+            _origin  = "https://soundcloud.com"
+        elif any(d in _url_lower for d in ("x.com", "twitter.com", "twimg.com", "pbs.twimg", "video.twimg")):
+            _referer = "https://x.com/"
+            _origin  = "https://x.com"
+        elif any(d in _url_lower for d in ("pornhub.com", "phncdn.com", "cdn.pornhub")):
+            _referer = "https://www.pornhub.com/"
+            _origin  = "https://www.pornhub.com"
+        elif any(d in _url_lower for d in ("reddit.com", "v.redd.it", "redd.it", "redditstatic.com")):
+            _referer = "https://www.reddit.com/"
+            _origin  = "https://www.reddit.com"
+        elif any(d in _url_lower for d in ("twitch.tv", "twitchcdn.net", "twitch-clips-production")):
+            _referer = "https://www.twitch.tv/"
+            _origin  = "https://www.twitch.tv"
+        elif any(d in _url_lower for d in ("dailymotion.com", "dmcdn.net")):
+            _referer = "https://www.dailymotion.com/"
+            _origin  = "https://www.dailymotion.com"
+        elif any(d in _url_lower for d in ("vimeo.com", "vimeocdn.com")):
+            _referer = "https://vimeo.com/"
+            _origin  = "https://vimeo.com"
+        elif any(d in _url_lower for d in ("bilibili.com", "bilivideo.com", "bilivideo.cn")):
+            _referer = "https://www.bilibili.com/"
+            _origin  = "https://www.bilibili.com"
+        else:
+            # Default → YouTube / googlevideo CDN
+            _referer = "https://www.youtube.com/"
+            _origin  = "https://www.youtube.com"
+
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Linux; Android 13; SM-S918B) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/120.0.0.0 Mobile Safari/537.36"
             ),
-            "Referer": "https://www.youtube.com/",
-            "Origin":  "https://www.youtube.com",
+            "Referer": _referer,
+            "Origin":  _origin,
         }
+        # yt-dlp provided headers always win — they are more specific than our defaults
         headers.update(req_headers)
         if req_cookies:
             headers["Cookie"] = req_cookies

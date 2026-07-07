@@ -1,0 +1,16 @@
+{
+  "name": "syntiox-pot-server",
+  "version": "1.0.0",
+  "description": "PO Token HTTP server for yt-dlp (bgutil-ytdlp-pot-provider)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "install-deps": "npm install"
+  },
+  "dependencies": {
+    "bgutil-ytdlp-pot-provider": "latest"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
