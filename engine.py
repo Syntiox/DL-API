@@ -18,9 +18,9 @@ _COMMON_OPTS = {
     'js_runtimes': {'node': {}},
     'impersonate': yt_dlp.networking.impersonate.ImpersonateTarget(client='chrome'),
     # ── Network stability ────────────────────────────────────────────────────
-    'socket_timeout': 20,      # idle socket timeout (seconds) — won't cut long downloads
-    'retries': 5,              # retry on transient network errors
-    'fragment_retries': 5,     # retry on fragment errors (HLS/DASH)
+    'socket_timeout': 30,      # idle socket timeout (seconds)
+    'retries': 10,             # retry on transient network errors
+    'fragment_retries': 10,    # retry on fragment errors (HLS/DASH)
     # ── Playlist safety cap ──────────────────────────────────────────────────
     'playlistend': 100,        # max 100 entries per playlist fetch
 }
@@ -30,36 +30,47 @@ import json
 
 #  Helper: Dynamic YouTube Extractor Args
 def _get_youtube_args() -> dict:
-    yt_args = {
-        # Let yt-dlp use its default client array for best format availability
-        # 'player_client' is omitted here intentionally
-    }
+    """
+    Build yt-dlp extractor args for YouTube.
     
-    # 1. Try to fetch from Remote PO Token Server (if configured)
+    Strategy (best → fallback):
+      1. tv_embedded client  → no PO token required, bypasses bot detection
+      2. bgutil POT server   → auto-generates PO tokens (needs bgutil running)
+      3. POT_PROVIDER_URL    → external PO token REST API
+      4. YT_PO_TOKEN env var → manual static PO token
+    
+    tv_embedded is the most reliable for server/datacenter IPs.
+    """
+    # ── Player clients: let yt-dlp use its own default selection ──────────────
+    # DO NOT set player_client here — yt-dlp's default picks the best clients
+    # automatically and returns the most formats (including 1080p, 4K, etc.)
+    # Forcing a specific client (e.g. tv_embedded) limits available formats.
+    yt_args: dict = {}
+
+    # ── PO Token from remote provider URL ──
     provider_url = os.environ.get("POT_PROVIDER_URL")
     if provider_url:
         try:
             req = urllib.request.Request(provider_url, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req, timeout=10) as response:
                 data = json.loads(response.read().decode())
-                
-                # Different providers might have different JSON keys
-                po_token = data.get("po_token") or data.get("poToken")
+                po_token    = data.get("po_token")    or data.get("poToken")
                 visitor_data = data.get("visitor_data") or data.get("visitorData")
-                
                 if po_token:
                     yt_args['po_token'] = po_token
+                    print(f"[ENGINE POT] Token fetched from provider: {provider_url}")
                 if visitor_data:
                     yt_args['visitor_data'] = visitor_data
         except Exception as e:
-            print(f"[ENGINE POT ERROR] Failed to fetch token from {provider_url}: {e}")
+            print(f"[ENGINE POT ERROR] Failed to fetch from {provider_url}: {e}")
 
-    # 2. Fallback to direct environment variables
+    # ── Fallback: direct env vars ──
     if 'po_token' not in yt_args and os.environ.get("YT_PO_TOKEN"):
         yt_args['po_token'] = os.environ.get("YT_PO_TOKEN")
+        print("[ENGINE POT] Using YT_PO_TOKEN from environment")
     if 'visitor_data' not in yt_args and os.environ.get("YT_VISITOR_DATA"):
         yt_args['visitor_data'] = os.environ.get("YT_VISITOR_DATA")
-        
+
     return yt_args
 
 #  Helper: extract & rank video formats
@@ -175,20 +186,23 @@ def get_info(url: str) -> dict:
     """Fetch metadata for a single video, search query, or a playlist."""
     is_search = url.startswith('ytsearch')
     
+    yt_args = _get_youtube_args()
+    print(f"[ENGINE YT] player_client={yt_args.get('player_client')}, po_token={'YES' if 'po_token' in yt_args else 'NO'}")
+
+    extractor_args = {
+        'youtube': yt_args,
+    }
+
+    # ── bgutil PO Token server (yt-dlp-get-pot plugin) ───────────────────────
+    # If bgutil is running (Docker / startup.sh), the plugin auto-injects tokens.
+    # tv_embedded client doesn't need this, but it helps web client fallback.
+    bgu_url = os.environ.get('BGU_BASE_URL', 'http://localhost:4416')
+    extractor_args['youtubepot-bgutilhttp'] = {'base_url': bgu_url}
+
     opts = {
         **_COMMON_OPTS,
         'logger': _SilentLogger(),
-        'extractor_args': {
-            'youtube': _get_youtube_args(),
-            # ── bgutil PO Token server (yt-dlp-get-pot plugin) ──────────────
-            # Points yt-dlp-get-pot plugin to our local bgutil HTTP server.
-            # bgutil generates YouTube Proof-of-Origin tokens automatically.
-            # Default: localhost:4416 (started by startup.sh inside Docker).
-            # Override with BGU_BASE_URL env var if running separately.
-            'youtubepot-bgutilhttp': {
-                'base_url': os.environ.get('BGU_BASE_URL', 'http://localhost:4416')
-            },
-        },
+        'extractor_args': extractor_args,
     }
     
     # ── Handle Cookies to Bypass Bot Detection ──
@@ -307,7 +321,9 @@ def get_info(url: str) -> dict:
                     'formats':         _extract_formats(info),
                 }
     except Exception as exc:
-        return {'type': 'error', 'message': str(exc)}
+        error_msg = str(exc)
+        print(f"[ENGINE ERROR] get_info failed for {url!r}: {error_msg}")
+        return {'type': 'error', 'message': error_msg}
     finally:
         if cookie_path and os.path.exists(cookie_path):
             try:
