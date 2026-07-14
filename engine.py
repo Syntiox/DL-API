@@ -324,33 +324,56 @@ def get_info(url: str) -> dict:
         formats_empty = is_youtube and result.get('type') == 'video' and not result.get('formats')
 
         if not formats_empty:
-            return result  # ✅ Primary succeeded
+            return result  # ✅ Primary succeeded with formats
 
         # ════════════════════════════════════════════════════════════════════
-        # FALLBACK ATTEMPT — android/ios/web + skip dash/hls
+        # FALLBACK CHAIN — tries multiple client strategies when primary fails
         # Only runs when primary returned 0 formats (datacenter IP block).
-        # Returns smaller formats (360p–480p) but bypasses bot-detection.
+        #
+        # Strategy order (most to least likely to work on datacenter IPs):
+        #   1. tv_embedded          — no PO token needed, YouTube TV client
+        #   2. android + mweb       — mobile clients, no dash/hls skip!
+        #   3. android_vr + tv      — alternative mobile/TV clients
+        #
+        # NOTE: Do NOT set player_skip here — android/ios formats are
+        #       delivered via DASH/HLS. Skipping them = 0 formats!
         # ════════════════════════════════════════════════════════════════════
-        print(f"[ENGINE FALLBACK] Primary returned 0 formats — retrying with android/ios clients")
+        print("[ENGINE FALLBACK] Primary returned 0 formats — trying fallback client chain")
 
-        fb_opts, fb_cookie_path = _make_opts({
-            'player_client': ['android', 'web', 'ios'],
-            'player_skip':   ['dash', 'hls'],
-        })
-        try:
-            fb_info   = _run_extract(url, fb_opts, fb_cookie_path)
-            fb_result = _parse_info(fb_info)
-            if fb_result.get('formats'):
-                print(f"[ENGINE FALLBACK] Got {len(fb_result['formats'])} formats via fallback ✅")
-                result['formats']    = fb_result['formats']
-                result['best_video'] = fb_result.get('best_video') or result.get('best_video')
-                result['best_audio'] = fb_result.get('best_audio') or result.get('best_audio')
-                result['_fallback']  = True  # caller can see quality is limited
-            else:
-                print("[ENGINE FALLBACK] Fallback also returned 0 formats ❌")
-        except Exception as fb_exc:
-            print(f"[ENGINE FALLBACK ERROR] {fb_exc}")
+        FALLBACK_STRATEGIES = [
+            # Strategy 1: tv_embedded — exempt from bot-check, no PO token needed
+            {
+                'player_client': ['tv_embedded', 'tv'],
+            },
+            # Strategy 2: android + mweb — mobile clients, return DASH streams
+            {
+                'player_client': ['android', 'mweb', 'ios'],
+            },
+            # Strategy 3: android_vr — VR client, less commonly blocked
+            {
+                'player_client': ['android_vr', 'web_creator'],
+            },
+        ]
 
+        for i, strategy in enumerate(FALLBACK_STRATEGIES, 1):
+            print(f"[ENGINE FALLBACK] Trying strategy {i}/{len(FALLBACK_STRATEGIES)}: {strategy['player_client']}")
+            try:
+                fb_opts, fb_cookie_path = _make_opts(strategy)
+                fb_info   = _run_extract(url, fb_opts, fb_cookie_path)
+                fb_result = _parse_info(fb_info)
+                if fb_result.get('formats'):
+                    print(f"[ENGINE FALLBACK] Strategy {i} got {len(fb_result['formats'])} formats ✅")
+                    result['formats']    = fb_result['formats']
+                    result['best_video'] = fb_result.get('best_video') or result.get('best_video')
+                    result['best_audio'] = fb_result.get('best_audio') or result.get('best_audio')
+                    result['_fallback']  = True  # flag: limited quality
+                    return result
+                else:
+                    print(f"[ENGINE FALLBACK] Strategy {i} also returned 0 formats")
+            except Exception as fb_exc:
+                print(f"[ENGINE FALLBACK] Strategy {i} error: {fb_exc}")
+
+        print("[ENGINE FALLBACK] All fallback strategies exhausted ❌")
         return result
 
     except Exception as exc:
