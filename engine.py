@@ -182,151 +182,178 @@ def check_ffmpeg() -> bool:
     """Return True if ffmpeg is available on this machine."""
     return shutil.which('ffmpeg') is not None or os.path.exists('ffmpeg.exe')
 
-def get_info(url: str) -> dict:
-    """Fetch metadata for a single video, search query, or a playlist."""
-    is_search = url.startswith('ytsearch')
-    
-    yt_args = _get_youtube_args()
-    print(f"[ENGINE YT] player_client={yt_args.get('player_client')}, po_token={'YES' if 'po_token' in yt_args else 'NO'}")
-
-    extractor_args = {
-        'youtube': yt_args,
+# ── Helper: build the result dict from an info dict ──────────────────────────
+def _build_video_result(src: dict) -> dict:
+    return {
+        'type':            'video',
+        'title':           src.get('title'),
+        'thumb':           src.get('thumbnail'),
+        'duration':        src.get('duration'),
+        'duration_string': src.get('duration_string'),
+        'uploader':        src.get('uploader'),
+        'uploader_id':     src.get('uploader_id'),
+        'channel':         src.get('channel'),
+        'channel_id':      src.get('channel_id'),
+        'channel_url':     src.get('channel_url'),
+        'webpage_url':     src.get('webpage_url'),
+        'extractor':       src.get('extractor'),
+        'upload_date':     src.get('upload_date'),
+        'timestamp':       src.get('timestamp'),
+        'view_count':      src.get('view_count'),
+        'like_count':      src.get('like_count'),
+        'dislike_count':   src.get('dislike_count'),
+        'comment_count':   src.get('comment_count'),
+        'average_rating':  src.get('average_rating'),
+        'age_limit':       src.get('age_limit'),
+        'tags':            src.get('tags'),
+        'categories':      src.get('categories'),
+        'description':     src.get('description'),
+        'language':        src.get('language'),
+        'is_live':         src.get('is_live'),
+        'was_live':        src.get('was_live'),
+        'best_video':      _get_best_video_with_audio(src),
+        'best_audio':      _get_best_audio(src),
+        'formats':         _extract_formats(src),
     }
 
-    # ── bgutil PO Token server (yt-dlp-get-pot plugin) ───────────────────────
-    # If bgutil is running (Docker / startup.sh), the plugin auto-injects tokens.
-    # tv_embedded client doesn't need this, but it helps web client fallback.
-    bgu_url = os.environ.get('BGU_BASE_URL', 'http://localhost:4416')
-    extractor_args['youtubepot-bgutilhttp'] = {'base_url': bgu_url}
-
-    opts = {
-        **_COMMON_OPTS,
-        'logger': _SilentLogger(),
-        'extractor_args': extractor_args,
-    }
-    
-    # ── Handle Cookies to Bypass Bot Detection ──
-    cookie_path = None
-    if os.path.exists("cookies.txt"):
-        opts['cookiefile'] = "cookies.txt"
-    else:
-        # Check if cookies are passed via environment variable (either base64 or raw text)
-        env_cookies = os.environ.get("YT_COOKIES")
-        if env_cookies:
-            try:
-                import base64
-                # Try decoding if it looks like base64, otherwise use raw text
-                try:
-                    decoded = base64.b64decode(env_cookies.strip(), validate=True).decode('utf-8')
-                    if "Netscape" in decoded or "# HTTP Cookie File" in decoded:
-                        cookie_content = decoded
-                    else:
-                        cookie_content = env_cookies
-                except Exception:
-                    cookie_content = env_cookies
-                
-                # Write to a temp file
-                import tempfile
-                temp_cookie = tempfile.NamedTemporaryFile(delete=False, mode='w', suffix='.txt', encoding='utf-8')
-                temp_cookie.write(cookie_content)
-                temp_cookie.close()
-                cookie_path = temp_cookie.name
-                opts['cookiefile'] = cookie_path
-            except Exception as e:
-                print(f"[ENGINE COOKIE ERROR] {e}")
-
-    if not is_search:
-        opts['extract_flat'] = 'in_playlist'
-
+# ── Helper: run yt-dlp extract_info with given opts ──────────────────────────
+def _run_extract(url: str, opts: dict, cookie_path: str | None):
+    """Run yt-dlp extract_info and return (info_dict, cookie_path)."""
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-
-            if 'entries' in info:
-                entries = list(info['entries'])
-                if is_search and len(entries) > 0:
-                    video_info = entries[0]
-                    return {
-                        'type':            'video',
-                        'title':           video_info.get('title'),
-                        'thumb':           video_info.get('thumbnail'),
-                        'duration':        video_info.get('duration'),
-                        'duration_string': video_info.get('duration_string'),
-                        'uploader':        video_info.get('uploader'),
-                        'uploader_id':     video_info.get('uploader_id'),
-                        'channel':         video_info.get('channel'),
-                        'channel_id':      video_info.get('channel_id'),
-                        'channel_url':     video_info.get('channel_url'),
-                        'webpage_url':     video_info.get('webpage_url'),
-                        'extractor':       video_info.get('extractor'),
-                        'upload_date':     video_info.get('upload_date'),
-                        'timestamp':       video_info.get('timestamp'),
-                        'view_count':      video_info.get('view_count'),
-                        'like_count':      video_info.get('like_count'),
-                        'dislike_count':   video_info.get('dislike_count'),
-                        'comment_count':   video_info.get('comment_count'),
-                        'average_rating':  video_info.get('average_rating'),
-                        'age_limit':       video_info.get('age_limit'),
-                        'tags':            video_info.get('tags'),
-                        'categories':      video_info.get('categories'),
-                        'description':     video_info.get('description'),
-                        'language':        video_info.get('language'),
-                        'is_live':         video_info.get('is_live'),
-                        'was_live':        video_info.get('was_live'),
-                        'best_video':      _get_best_video_with_audio(video_info),
-                        'best_audio':      _get_best_audio(video_info),
-                        'formats':         _extract_formats(video_info),
-                    }
-                else:
-                    videos = [
-                        {'title': e.get('title'), 'url': e.get('url')}
-                        for e in entries if e.get('url')
-                    ]
-                    return {
-                        'type':   'playlist',
-                        'title':  info.get('title'),
-                        'count':  len(videos),
-                        'videos': videos,
-                    }
-            else:
-                return {
-                    'type':            'video',
-                    'title':           info.get('title'),
-                    'thumb':           info.get('thumbnail'),
-                    'duration':        info.get('duration'),
-                    'duration_string': info.get('duration_string'),
-                    'uploader':        info.get('uploader'),
-                    'uploader_id':     info.get('uploader_id'),
-                    'channel':         info.get('channel'),
-                    'channel_id':      info.get('channel_id'),
-                    'channel_url':     info.get('channel_url'),
-                    'webpage_url':     info.get('webpage_url'),
-                    'extractor':       info.get('extractor'),
-                    'upload_date':     info.get('upload_date'),
-                    'timestamp':       info.get('timestamp'),
-                    'view_count':      info.get('view_count'),
-                    'like_count':      info.get('like_count'),
-                    'dislike_count':   info.get('dislike_count'),
-                    'comment_count':   info.get('comment_count'),
-                    'average_rating':  info.get('average_rating'),
-                    'age_limit':       info.get('age_limit'),
-                    'tags':            info.get('tags'),
-                    'categories':      info.get('categories'),
-                    'description':     info.get('description'),
-                    'language':        info.get('language'),
-                    'is_live':         info.get('is_live'),
-                    'was_live':        info.get('was_live'),
-                    'best_video':      _get_best_video_with_audio(info),
-                    'best_audio':      _get_best_audio(info),
-                    'formats':         _extract_formats(info),
-                }
-    except Exception as exc:
-        error_msg = str(exc)
-        print(f"[ENGINE ERROR] get_info failed for {url!r}: {error_msg}")
-        return {'type': 'error', 'message': error_msg}
+            return ydl.extract_info(url, download=False)
     finally:
         if cookie_path and os.path.exists(cookie_path):
             try:
                 os.remove(cookie_path)
             except Exception:
                 pass
+
+def get_info(url: str) -> dict:
+    """
+    Fetch metadata for a single video, search query, or a playlist.
+
+    Strategy:
+      1. Primary attempt  → yt-dlp default clients (best quality, all formats)
+      2. Fallback attempt → android/ios/web clients + skip dash/hls
+                           (smaller formats but bypasses IP bot-detection)
+    Fallback only triggers if primary returns 0 formats (online IP block).
+    """
+    is_search = url.startswith('ytsearch')
+
+    # ── Build opts with given yt extractor args ───────────────────────────────
+    def _make_opts(extra_yt_args: dict | None = None) -> tuple[dict, str | None]:
+        """Returns (opts_dict, temp_cookie_path_or_None)."""
+        yt_args = _get_youtube_args()
+        if extra_yt_args:
+            yt_args.update(extra_yt_args)
+
+        print(f"[ENGINE YT] player_client={yt_args.get('player_client', 'default')}, "
+              f"po_token={'YES' if 'po_token' in yt_args else 'NO'}")
+
+        extractor_args = {
+            'youtube': yt_args,
+            'youtubepot-bgutilhttp': {
+                'base_url': os.environ.get('BGU_BASE_URL', 'http://localhost:4416')
+            },
+        }
+
+        o = {
+            **_COMMON_OPTS,
+            'logger': _SilentLogger(),
+            'extractor_args': extractor_args,
+        }
+
+        # ── Cookies ──────────────────────────────────────────────────────────
+        c_path = None
+        if os.path.exists("cookies.txt"):
+            o['cookiefile'] = "cookies.txt"
+        else:
+            env_cookies = os.environ.get("YT_COOKIES")
+            if env_cookies:
+                try:
+                    import base64, tempfile
+                    try:
+                        decoded = base64.b64decode(env_cookies.strip(), validate=True).decode('utf-8')
+                        cookie_content = decoded if ("Netscape" in decoded or "# HTTP Cookie File" in decoded) else env_cookies
+                    except Exception:
+                        cookie_content = env_cookies
+                    tmp = tempfile.NamedTemporaryFile(delete=False, mode='w', suffix='.txt', encoding='utf-8')
+                    tmp.write(cookie_content)
+                    tmp.close()
+                    c_path = tmp.name
+                    o['cookiefile'] = c_path
+                except Exception as e:
+                    print(f"[ENGINE COOKIE ERROR] {e}")
+
+        if not is_search:
+            o['extract_flat'] = 'in_playlist'
+
+        return o, c_path
+
+    # ── Parse yt-dlp info dict → result dict ─────────────────────────────────
+    def _parse_info(info: dict) -> dict:
+        if 'entries' in info:
+            entries = list(info['entries'])
+            if is_search and entries:
+                return _build_video_result(entries[0])
+            else:
+                videos = [
+                    {'title': e.get('title'), 'url': e.get('url')}
+                    for e in entries if e.get('url')
+                ]
+                return {
+                    'type':   'playlist',
+                    'title':  info.get('title'),
+                    'count':  len(videos),
+                    'videos': videos,
+                }
+        else:
+            return _build_video_result(info)
+
+    # ════════════════════════════════════════════════════════════════════════
+    # PRIMARY ATTEMPT — yt-dlp default clients (best quality, all formats)
+    # ════════════════════════════════════════════════════════════════════════
+    opts, cookie_path = _make_opts()
+    try:
+        info   = _run_extract(url, opts, cookie_path)
+        result = _parse_info(info)
+
+        # Check if YouTube returned empty formats (IP blocked on datacenter)
+        is_youtube    = any(d in url.lower() for d in ('youtube.com', 'youtu.be', 'ytsearch'))
+        formats_empty = is_youtube and result.get('type') == 'video' and not result.get('formats')
+
+        if not formats_empty:
+            return result  # ✅ Primary succeeded
+
+        # ════════════════════════════════════════════════════════════════════
+        # FALLBACK ATTEMPT — android/ios/web + skip dash/hls
+        # Only runs when primary returned 0 formats (datacenter IP block).
+        # Returns smaller formats (360p–480p) but bypasses bot-detection.
+        # ════════════════════════════════════════════════════════════════════
+        print(f"[ENGINE FALLBACK] Primary returned 0 formats — retrying with android/ios clients")
+
+        fb_opts, fb_cookie_path = _make_opts({
+            'player_client': ['android', 'web', 'ios'],
+            'player_skip':   ['dash', 'hls'],
+        })
+        try:
+            fb_info   = _run_extract(url, fb_opts, fb_cookie_path)
+            fb_result = _parse_info(fb_info)
+            if fb_result.get('formats'):
+                print(f"[ENGINE FALLBACK] Got {len(fb_result['formats'])} formats via fallback ✅")
+                result['formats']    = fb_result['formats']
+                result['best_video'] = fb_result.get('best_video') or result.get('best_video')
+                result['best_audio'] = fb_result.get('best_audio') or result.get('best_audio')
+                result['_fallback']  = True  # caller can see quality is limited
+            else:
+                print("[ENGINE FALLBACK] Fallback also returned 0 formats ❌")
+        except Exception as fb_exc:
+            print(f"[ENGINE FALLBACK ERROR] {fb_exc}")
+
+        return result
+
+    except Exception as exc:
+        error_msg = str(exc)
+        print(f"[ENGINE ERROR] get_info failed for {url!r}: {error_msg}")
+        return {'type': 'error', 'message': error_msg}
