@@ -25,36 +25,6 @@ _COMMON_OPTS = {
     'playlistend': 100,        # max 100 entries per playlist fetch
 }
 
-def _get_proxy_opts() -> dict:
-    """
-    Returns proxy opts for yt-dlp if PROXY_URL env var is set.
-    Supports: http://, https://, socks5://, socks5h:// schemes.
-
-    Example env vars:
-      PROXY_URL=http://user:pass@residential-proxy.example.com:8080
-      PROXY_URL=socks5://user:pass@proxy.example.com:1080
-
-    Important: sets NO_PROXY=localhost so bgutil (localhost:4416) is NOT
-    routed through the proxy — only YouTube/CDN requests use the proxy.
-    """
-    proxy = os.environ.get('PROXY_URL', '').strip().strip('"').strip("'").rstrip('/')
-    if proxy:
-        # Ensure localhost connections skip the proxy (bgutil runs on localhost)
-        existing_no_proxy = os.environ.get('NO_PROXY', '')
-        local_hosts = 'localhost,127.0.0.1,::1'
-        if local_hosts not in existing_no_proxy:
-            os.environ['NO_PROXY'] = f"{local_hosts},{existing_no_proxy}".strip(',')
-
-        # Log only the host:port part (hide credentials)
-        display = proxy.split('@')[-1] if '@' in proxy else proxy
-        print(f"[ENGINE PROXY] Using proxy: {display}")
-        return {
-            'proxy': proxy,
-            # Don't bind source address when using proxy
-            'source_address': None,
-        }
-    return {}
-
 import urllib.request
 import json
 
@@ -293,11 +263,6 @@ def get_info(url: str) -> dict:
             'logger': _SilentLogger(),
             'extractor_args': extractor_args,
         }
-
-        # ── Proxy support (bypasses datacenter IP block) ──────────────────────
-        proxy_opts = _get_proxy_opts()
-        if proxy_opts:
-            o.update(proxy_opts)
 
         # ── Cookies ──────────────────────────────────────────────────────────
         c_path = None
