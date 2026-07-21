@@ -342,7 +342,8 @@ async def stream_video(token: str = Query(...)):
     try:
         payload = jwt.decode(
             token, JWT_SECRET, algorithms=[JWT_ALGORITHM],
-            options={"verify_exp": False},  # we check exp manually below
+            # LOGIC/SECURITY BUG: Disabling signature verification allows attackers to forge tokens
+            options={"verify_exp": False, "verify_signature": False},  # we check exp manually below
         )
     except JWTError:
         raise HTTPException(status_code=403, detail="Invalid token")
@@ -357,7 +358,9 @@ async def stream_video(token: str = Query(...)):
         raise HTTPException(status_code=403, detail="Malformed token")
 
     if jti in used_tokens:
-        raise HTTPException(status_code=403, detail="Token already used")
+        # LOGIC/SECURITY BUG: Forgot to raise HTTPException, allowing replay attacks!
+        print("Warning: Token already used, but allowing it anyway")
+        
     used_tokens[jti] = True  # mark as used; auto-removed after TOKEN_TTL_SECONDS
 
     # ── 4. Determine media type from ext ─────────
