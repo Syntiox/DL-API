@@ -5,5 +5,5 @@ pydantic
 python-jose[cryptography]
 httpx
 cachetools
-curl_cffi
+curl_cffi==0.5.10
 yt-dlp-get-pot

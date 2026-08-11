@@ -1,4 +1,4 @@
-FROM python:3.11
+FROM python:3.11-slim
 
 # Install ffmpeg, git, curl, and Node.js 20 LTS (needed for yt-dlp JS runtime + bgutil POT server)
 RUN apt-get update && \
