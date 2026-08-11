@@ -16,7 +16,7 @@ _COMMON_OPTS = {
     'simulate': True,
     'format': 'all',
     'js_runtimes': {'node': {}},
-    'impersonate': yt_dlp.networking.impersonate.ImpersonateTarget(client='chrome'),
+    'impersonate': yt_dlp.networking.impersonate.ImpersonateTarget(client='chrome-110'),
     # ── Network stability ────────────────────────────────────────────────────
     'socket_timeout': 30,      # idle socket timeout (seconds)
     'retries': 10,             # retry on transient network errors
