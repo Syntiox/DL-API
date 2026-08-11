@@ -2,7 +2,8 @@ FROM python:3.11-slim
 
 # Install ffmpeg, git, curl, and Node.js 20 LTS (needed for yt-dlp JS runtime + bgutil POT server)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg git curl ca-certificates && \
+    apt-get install -y --no-install-recommends ffmpeg git curl ca-certificates \
+    libnss3 libnspr4 libxcb1 && \
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     rm -rf /var/lib/apt/lists/*
